@@ -1,0 +1,7 @@
+{
+  "name": "Hostname in Title",
+  "description": "Smart hostname display for terminals: extracts SSH hostnames, detects active tab via process state, magical pulsing badge in panel",
+  "uuid": "hostname-in-title@local",
+  "shell-version": ["45", "46", "47"],
+  "version": 3
+}
