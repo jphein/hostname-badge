@@ -1,6 +1,6 @@
 #!/bin/bash
 # Deploy extension from source to GNOME Shell
-SRC="$HOME/Projects/hostname-in-title"
+SRC="$HOME/Projects/hostname-badge"
 DEST="$HOME/.local/share/gnome-shell/extensions/hostname-in-title@local"
 
 rm -rf "$DEST"
