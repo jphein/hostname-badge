@@ -358,15 +358,18 @@ function detectSshHostname(win, forceRefresh = false) {
             return cached.hostname;
         }
 
+        // Look for SSH processes that are descendants of THIS terminal's PID
         const [ok, stdout] = GLib.spawn_command_line_sync(
-            `bash -c "ps -eo stat,args | grep -E '^[SR]\\+' | grep '[s]sh ' | head -1 || ps -eo args | grep '[s]sh ' | grep -v grep | tail -1"`
+            `bash -c "pstree -pA ${pid} 2>/dev/null | grep -oE 'ssh.\\([0-9]+\\)' | head -1 | grep -oE '[0-9]+' | xargs -I{} ps -p {} -o args= 2>/dev/null || true"`
         );
 
         let hostname = null;
         if (ok && stdout && stdout.length > 0) {
             const output = new TextDecoder().decode(stdout).trim();
-            const sshMatch = output.match(/ssh\s+(?:-\S+\s+)*(?:[\w-]+@)?([\w.-]+)/);
-            if (sshMatch && sshMatch[1]) hostname = sshMatch[1];
+            if (output) {
+                const sshMatch = output.match(/ssh\s+(?:-\S+\s+)*(?:[\w-]+@)?([\w.-]+)/);
+                if (sshMatch && sshMatch[1]) hostname = sshMatch[1];
+            }
         }
 
         sshHostnameCache.set(cacheKey, { hostname, time: Date.now() });
@@ -409,10 +412,10 @@ function isTerminalWindow(win) {
 function getEffectiveHostname(title, win = null) {
     const extracted = extractHostnameFromTitle(title);
     if (extracted) return extracted;
-    if (win) {
-        const sshHost = detectSshHostname(win, isAggressiveApp(title));
-        if (sshHost) return sshHost;
-    }
+
+    // If title contains hostname pattern, use title-based detection
+    // SSH process detection is unreliable with GNOME Terminal tabs (shared PID)
+    // User should set CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 and configure shell prompt
     return LOCAL_HOSTNAME;
 }
 
