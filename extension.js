@@ -3,79 +3,178 @@ import GObject from 'gi://GObject';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as DND from 'resource:///org/gnome/shell/ui/dnd.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const LOCAL_HOSTNAME = GLib.get_host_name();
-
-// Cache for SSH hostnames per window PID
 const sshHostnameCache = new Map();
 
-// Terminal app WM classes
 const TERMINAL_CLASSES = [
     'gnome-terminal', 'gnome-terminal-server', 'tilix', 'kitty',
     'alacritty', 'terminator', 'konsole', 'xterm', 'urxvt',
     'foot', 'wezterm', 'contour', 'hyper', 'tabby'
 ];
 
-// Patterns to extract hostname from title
 const HOSTNAME_EXTRACT_PATTERNS = [
-    /^(\w+)@([\w.-]+):/,              // user@host:
-    /^([\w.-]+):\s/,                   // host:
-    /\[([\w.-]+)\]$/,                  // [host]
-    /\(([\w.-]+)\)$/,                  // (host)
-    /^([\w.-]+)\s*[─—-]\s*/,           // host -
+    /^(\w+)@([\w.-]+):/,
+    /^([\w.-]+):\s/,
+    /\[([\w.-]+)\]$/,
+    /\(([\w.-]+)\)$/,
+    /^([\w.-]+)\s*[─—-]\s*/,
     /tmux:?\s*[\d:]*\s*(\w+)@([\w.-]+)/i,
     /screen\s+\d+[.:]\s*([\w.-]+)/i,
     /(\w+)@([\w.-]+)\s*\|/,
     /\|\s*(\w+)@([\w.-]+)/,
 ];
 
-// Apps that override titles aggressively
 const AGGRESSIVE_APPS = ['claude code', 'claude'];
-
-// Our suffix pattern
 const OUR_SUFFIX_PATTERN = /\s+\[[\w.-]+\]$/;
 
-// Panel indicator - magical floating badge
-const HostnameIndicator = GObject.registerClass(
-class HostnameIndicator extends PanelMenu.Button {
-    _init() {
-        super._init(0.0, 'Hostname Indicator');
+// Settings file for position persistence
+const SETTINGS_PATH = GLib.get_home_dir() + '/.config/hostname-badge-position.json';
 
-        this._outerBox = new St.BoxLayout({
-            y_align: Clutter.ActorAlign.CENTER,
-            x_align: Clutter.ActorAlign.CENTER,
+function loadPosition() {
+    try {
+        const [ok, contents] = GLib.file_get_contents(SETTINGS_PATH);
+        if (ok) {
+            return JSON.parse(new TextDecoder().decode(contents));
+        }
+    } catch (e) {}
+    return { x: -1, y: 8 }; // default: top-right area
+}
+
+function savePosition(x, y) {
+    try {
+        const data = JSON.stringify({ x, y });
+        GLib.file_set_contents(SETTINGS_PATH, data);
+    } catch (e) {}
+}
+
+// Magical floating badge
+const HostnameBadge = GObject.registerClass(
+class HostnameBadge extends St.Widget {
+    _init() {
+        super._init({
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
+            layout_manager: new Clutter.BinLayout(),
         });
 
+        // Outer glow ring
+        this._glowRing = new St.Widget({
+            style: `
+                background-color: rgba(138, 226, 52, 0.15);
+                border: 1px solid rgba(138, 226, 52, 0.25);
+                border-radius: 18px;
+            `,
+        });
+        this.add_child(this._glowRing);
+
+        // Middle glow
+        this._midGlow = new St.Widget({
+            style: `
+                background-color: rgba(138, 226, 52, 0.08);
+                border-radius: 15px;
+            `,
+        });
+        this.add_child(this._midGlow);
+
+        // Badge label
         this._badge = new St.Label({
             text: `◈ ${LOCAL_HOSTNAME}`,
             y_align: Clutter.ActorAlign.CENTER,
             x_align: Clutter.ActorAlign.CENTER,
         });
-
         this._applyLocalStyle();
-
-        this._outerBox.add_child(this._badge);
-        this.add_child(this._outerBox);
+        this.add_child(this._badge);
 
         this._currentHost = LOCAL_HOSTNAME;
         this._isRemote = false;
         this._pulseTimeline = null;
+        this._glowPulseTimeline = null;
+        this._dragging = false;
+
+        // Enable drag
+        this._dragMonitor = null;
+        this._dragStartX = 0;
+        this._dragStartY = 0;
+
+        this.connect('button-press-event', this._onButtonPress.bind(this));
+        this.connect('button-release-event', this._onButtonRelease.bind(this));
+        this.connect('motion-event', this._onMotion.bind(this));
 
         this._startIdlePulse();
+        this._startGlowPulse();
+    }
+
+    _onButtonPress(actor, event) {
+        if (event.get_button() === 1) {
+            this._dragging = true;
+            const [stageX, stageY] = event.get_coords();
+            this._dragStartX = stageX - this.x;
+            this._dragStartY = stageY - this.y;
+            // Visual feedback
+            this._badge.ease({
+                scale_x: 1.1,
+                scale_y: 1.1,
+                duration: 100,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            });
+            return Clutter.EVENT_STOP;
+        }
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    _onButtonRelease(actor, event) {
+        if (this._dragging) {
+            this._dragging = false;
+            savePosition(this.x, this.y);
+            this._badge.ease({
+                scale_x: 1.0,
+                scale_y: 1.0,
+                duration: 200,
+                mode: Clutter.AnimationMode.EASE_IN_OUT_QUAD,
+            });
+            return Clutter.EVENT_STOP;
+        }
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    _onMotion(actor, event) {
+        if (this._dragging) {
+            const [stageX, stageY] = event.get_coords();
+            this.set_position(
+                Math.max(0, stageX - this._dragStartX),
+                Math.max(0, stageY - this._dragStartY)
+            );
+            return Clutter.EVENT_STOP;
+        }
+        return Clutter.EVENT_PROPAGATE;
     }
 
     _applyLocalStyle() {
         this._badge.style = `
             font-weight: bold;
-            font-size: 12px;
+            font-size: 13px;
             color: #8ae234;
-            background-color: rgba(40, 60, 40, 0.95);
-            border: 2px solid #8ae234;
-            border-radius: 12px;
-            padding: 3px 12px;
+            background-color: rgba(20, 35, 20, 0.92);
+            border: 2px solid rgba(138, 226, 52, 0.7);
+            border-radius: 14px;
+            padding: 5px 16px;
+        `;
+        this._glowRing.style = `
+            background-color: rgba(138, 226, 52, 0.12);
+            border: 1px solid rgba(138, 226, 52, 0.2);
+            border-radius: 20px;
+            padding: 6px;
+        `;
+        this._midGlow.style = `
+            background-color: rgba(138, 226, 52, 0.06);
+            border-radius: 17px;
+            padding: 3px;
         `;
         this._isRemote = false;
     }
@@ -83,27 +182,48 @@ class HostnameIndicator extends PanelMenu.Button {
     _applyRemoteStyle() {
         this._badge.style = `
             font-weight: bold;
-            font-size: 12px;
+            font-size: 13px;
             color: #34e2e2;
-            background-color: rgba(40, 60, 70, 0.95);
-            border: 2px solid #34e2e2;
-            border-radius: 12px;
-            padding: 3px 12px;
+            background-color: rgba(20, 30, 40, 0.92);
+            border: 2px solid rgba(52, 226, 226, 0.7);
+            border-radius: 14px;
+            padding: 5px 16px;
+        `;
+        this._glowRing.style = `
+            background-color: rgba(52, 226, 226, 0.12);
+            border: 1px solid rgba(52, 226, 226, 0.2);
+            border-radius: 20px;
+            padding: 6px;
+        `;
+        this._midGlow.style = `
+            background-color: rgba(52, 226, 226, 0.06);
+            border-radius: 17px;
+            padding: 3px;
         `;
         this._isRemote = true;
     }
 
     _applyBurstStyle(isRemote) {
-        const color = isRemote ? '#34e2e2' : '#8ae234';
-        const bg = isRemote ? 'rgba(40, 80, 90, 1)' : 'rgba(60, 90, 60, 1)';
+        const c = isRemote ? '52, 226, 226' : '138, 226, 52';
         this._badge.style = `
             font-weight: bold;
-            font-size: 13px;
+            font-size: 14px;
             color: #ffffff;
-            background-color: ${bg};
-            border: 3px solid ${color};
-            border-radius: 14px;
-            padding: 4px 14px;
+            background-color: rgba(${c}, 0.25);
+            border: 3px solid rgba(${c}, 1);
+            border-radius: 16px;
+            padding: 6px 18px;
+        `;
+        this._glowRing.style = `
+            background-color: rgba(${c}, 0.35);
+            border: 2px solid rgba(${c}, 0.6);
+            border-radius: 22px;
+            padding: 8px;
+        `;
+        this._midGlow.style = `
+            background-color: rgba(${c}, 0.2);
+            border-radius: 19px;
+            padding: 4px;
         `;
     }
 
@@ -114,44 +234,78 @@ class HostnameIndicator extends PanelMenu.Button {
         }
 
         this._pulseTimeline = new Clutter.Timeline({
-            duration: 2500,
+            duration: 3000,
             repeat_count: -1,
             actor: this._badge,
         });
 
         this._pulseTimeline.connect('new-frame', () => {
-            const progress = this._pulseTimeline.get_progress();
-            const pulse = Math.sin(progress * Math.PI * 2) * 0.2 + 0.8;
-            this._badge.opacity = Math.floor(pulse * 255);
+            const p = this._pulseTimeline.get_progress();
+            // Smooth breathing: slow in, slow out
+            const breath = Math.sin(p * Math.PI * 2) * 0.15 + 0.85;
+            this._badge.opacity = Math.floor(breath * 255);
         });
 
         this._pulseTimeline.start();
     }
 
+    _startGlowPulse() {
+        if (this._glowPulseTimeline) {
+            this._glowPulseTimeline.stop();
+            this._glowPulseTimeline = null;
+        }
+
+        this._glowPulseTimeline = new Clutter.Timeline({
+            duration: 4000,
+            repeat_count: -1,
+            actor: this._glowRing,
+        });
+
+        this._glowPulseTimeline.connect('new-frame', () => {
+            const p = this._glowPulseTimeline.get_progress();
+            // Offset from badge pulse for layered effect
+            const glow = Math.sin(p * Math.PI * 2 + 1.5) * 0.3 + 0.7;
+            this._glowRing.opacity = Math.floor(glow * 255);
+            this._midGlow.opacity = Math.floor(glow * 200);
+        });
+
+        this._glowPulseTimeline.start();
+    }
+
     _triggerHostChangeGlow(isRemote) {
+        // Stop all pulses
         if (this._pulseTimeline) {
             this._pulseTimeline.stop();
             this._pulseTimeline = null;
         }
+        if (this._glowPulseTimeline) {
+            this._glowPulseTimeline.stop();
+            this._glowPulseTimeline = null;
+        }
 
+        // Burst!
         this._applyBurstStyle(isRemote);
         this._badge.opacity = 255;
+        this._glowRing.opacity = 255;
+        this._midGlow.opacity = 255;
 
-        this._badge.ease({
-            scale_x: 1.15,
-            scale_y: 1.15,
-            duration: 150,
-            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+        // Scale burst on all layers
+        this.ease({
+            scale_x: 1.25,
+            scale_y: 1.25,
+            duration: 200,
+            mode: Clutter.AnimationMode.EASE_OUT_BACK,
             onComplete: () => {
-                this._badge.ease({
+                this.ease({
                     scale_x: 1.0,
                     scale_y: 1.0,
-                    duration: 300,
+                    duration: 600,
                     mode: Clutter.AnimationMode.EASE_IN_OUT_QUAD,
                     onComplete: () => {
                         if (isRemote) this._applyRemoteStyle();
                         else this._applyLocalStyle();
                         this._startIdlePulse();
+                        this._startGlowPulse();
                     }
                 });
             }
@@ -183,11 +337,16 @@ class HostnameIndicator extends PanelMenu.Button {
             this._pulseTimeline.stop();
             this._pulseTimeline = null;
         }
+        if (this._glowPulseTimeline) {
+            this._glowPulseTimeline.stop();
+            this._glowPulseTimeline = null;
+        }
         super.destroy();
     }
 });
 
-// Detect SSH hostname via foreground process state
+// --- SSH detection and title logic (unchanged) ---
+
 function detectSshHostname(win, forceRefresh = false) {
     try {
         const pid = win.get_pid();
@@ -199,19 +358,15 @@ function detectSshHostname(win, forceRefresh = false) {
             return cached.hostname;
         }
 
-        // Find foreground SSH (S+ = active tab), fallback to any SSH
         const [ok, stdout] = GLib.spawn_command_line_sync(
             `bash -c "ps -eo stat,args | grep -E '^[SR]\\+' | grep '[s]sh ' | head -1 || ps -eo args | grep '[s]sh ' | grep -v grep | tail -1"`
         );
 
         let hostname = null;
-
         if (ok && stdout && stdout.length > 0) {
             const output = new TextDecoder().decode(stdout).trim();
             const sshMatch = output.match(/ssh\s+(?:-\S+\s+)*(?:[\w-]+@)?([\w.-]+)/);
-            if (sshMatch && sshMatch[1]) {
-                hostname = sshMatch[1];
-            }
+            if (sshMatch && sshMatch[1]) hostname = sshMatch[1];
         }
 
         sshHostnameCache.set(cacheKey, { hostname, time: Date.now() });
@@ -223,19 +378,13 @@ function detectSshHostname(win, forceRefresh = false) {
 
 function extractHostnameFromTitle(title) {
     if (!title) return null;
-
     for (const pattern of HOSTNAME_EXTRACT_PATTERNS) {
         const match = title.match(pattern);
         if (match) {
             for (let i = match.length - 1; i >= 1; i--) {
-                const candidate = match[i];
-                if (candidate &&
-                    candidate.length > 1 &&
-                    !candidate.match(/^\d+$/) &&
-                    candidate.match(/^[\w.-]+$/)) {
-                    if (candidate.includes('.') || candidate.length <= 15) {
-                        return candidate;
-                    }
+                const c = match[i];
+                if (c && c.length > 1 && !c.match(/^\d+$/) && c.match(/^[\w.-]+$/)) {
+                    if (c.includes('.') || c.length <= 15) return c;
                 }
             }
         }
@@ -260,13 +409,10 @@ function isTerminalWindow(win) {
 function getEffectiveHostname(title, win = null) {
     const extracted = extractHostnameFromTitle(title);
     if (extracted) return extracted;
-
     if (win) {
-        const forceRefresh = isAggressiveApp(title);
-        const sshHost = detectSshHostname(win, forceRefresh);
+        const sshHost = detectSshHostname(win, isAggressiveApp(title));
         if (sshHost) return sshHost;
     }
-
     return LOCAL_HOSTNAME;
 }
 
@@ -290,7 +436,7 @@ export default class HostnameInTitleExtension extends Extension {
         super(metadata);
         this._connections = [];
         this._titleConnections = new Map();
-        this._indicator = null;
+        this._badge = null;
         this._windowTracker = null;
     }
 
@@ -300,12 +446,11 @@ export default class HostnameInTitleExtension extends Extension {
         const realTitle = win._hostnameOriginalGetTitle
             ? win._hostnameOriginalGetTitle()
             : win.get_title();
-
         if (!realTitle) return;
 
-        if (win === global.display.get_focus_window() && this._indicator) {
+        if (win === global.display.get_focus_window() && this._badge) {
             const host = getEffectiveHostname(realTitle, win);
-            this._indicator.setHost(host);
+            this._badge.setHost(host);
         }
 
         if (!shouldModifyTitle(realTitle)) {
@@ -330,12 +475,10 @@ export default class HostnameInTitleExtension extends Extension {
 
     _cleanupWindow(win) {
         if (!win) return;
-
         if (this._titleConnections.has(win)) {
             try { win.disconnect(this._titleConnections.get(win)); } catch (e) {}
             this._titleConnections.delete(win);
         }
-
         if (win._hostnameOriginalGetTitle) {
             try { win.get_title = win._hostnameOriginalGetTitle; } catch (e) {}
             delete win._hostnameOriginalGetTitle;
@@ -345,22 +488,36 @@ export default class HostnameInTitleExtension extends Extension {
     _connectWindow(win) {
         if (!win || this._titleConnections.has(win)) return;
         if (!isTerminalWindow(win)) return;
-
         try {
             const id = win.connect('notify::title', () => this._updateWindow(win));
             this._titleConnections.set(win, id);
             this._updateWindow(win);
         } catch (e) {
-            console.log(`hostname-in-title: Error connecting window: ${e}`);
+            console.log(`hostname-in-title: Error: ${e}`);
         }
     }
 
     enable() {
         this._windowTracker = Shell.WindowTracker.get_default();
 
-        this._indicator = new HostnameIndicator();
-        Main.panel.addToStatusArea('hostname-indicator', this._indicator, -1, 'right');
+        // Create floating badge
+        this._badge = new HostnameBadge();
+        Main.layoutManager.addChrome(this._badge, {
+            affectsInputRegion: true,
+            trackFullscreen: true,
+        });
 
+        // Position from saved settings or default
+        const pos = loadPosition();
+        if (pos.x < 0) {
+            // Default: top-right, near panel
+            const monitor = Main.layoutManager.primaryMonitor;
+            this._badge.set_position(monitor.width - 180, 8);
+        } else {
+            this._badge.set_position(pos.x, pos.y);
+        }
+
+        // Connect existing windows
         for (const actor of global.get_window_actors()) {
             this._connectWindow(actor.meta_window);
         }
@@ -377,8 +534,8 @@ export default class HostnameInTitleExtension extends Extension {
             const win = global.display.get_focus_window();
             if (win && isTerminalWindow(win)) {
                 this._updateWindow(win);
-            } else if (this._indicator) {
-                this._indicator.setHost(LOCAL_HOSTNAME);
+            } else if (this._badge) {
+                this._badge.setHost(LOCAL_HOSTNAME);
             }
         });
         this._connections.push({ obj: global.display, id: focusId });
@@ -390,9 +547,10 @@ export default class HostnameInTitleExtension extends Extension {
     }
 
     disable() {
-        if (this._indicator) {
-            this._indicator.destroy();
-            this._indicator = null;
+        if (this._badge) {
+            Main.layoutManager.removeChrome(this._badge);
+            this._badge.destroy();
+            this._badge = null;
         }
 
         for (const conn of this._connections) {
