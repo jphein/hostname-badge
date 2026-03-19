@@ -3,9 +3,7 @@ import GObject from 'gi://GObject';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
-import Gio from 'gi://Gio';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import * as DND from 'resource:///org/gnome/shell/ui/dnd.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const LOCAL_HOSTNAME = GLib.get_host_name();
@@ -62,6 +60,7 @@ class HostnameBadge extends St.Widget {
             track_hover: true,
             layout_manager: new Clutter.BinLayout(),
         });
+        this.set_pivot_point(0.5, 0.5);
 
         // Outer glow ring
         this._glowRing = new St.Widget({
@@ -89,16 +88,16 @@ class HostnameBadge extends St.Widget {
             x_align: Clutter.ActorAlign.CENTER,
         });
         this._applyLocalStyle();
+        this._badge.set_pivot_point(0.5, 0.5);
         this.add_child(this._badge);
 
         this._currentHost = LOCAL_HOSTNAME;
         this._isRemote = false;
         this._pulseTimeline = null;
         this._glowPulseTimeline = null;
+        this._destroyed = false;
         this._dragging = false;
 
-        // Enable drag
-        this._dragMonitor = null;
         this._dragStartX = 0;
         this._dragStartY = 0;
 
@@ -296,12 +295,14 @@ class HostnameBadge extends St.Widget {
             duration: 200,
             mode: Clutter.AnimationMode.EASE_OUT_BACK,
             onComplete: () => {
+                if (this._destroyed) return;
                 this.ease({
                     scale_x: 1.0,
                     scale_y: 1.0,
                     duration: 600,
                     mode: Clutter.AnimationMode.EASE_IN_OUT_QUAD,
                     onComplete: () => {
+                        if (this._destroyed) return;
                         if (isRemote) this._applyRemoteStyle();
                         else this._applyLocalStyle();
                         this._startIdlePulse();
@@ -333,6 +334,8 @@ class HostnameBadge extends St.Widget {
     }
 
     destroy() {
+        this._destroyed = true;
+
         if (this._pulseTimeline) {
             this._pulseTimeline.stop();
             this._pulseTimeline = null;
@@ -341,6 +344,14 @@ class HostnameBadge extends St.Widget {
             this._glowPulseTimeline.stop();
             this._glowPulseTimeline = null;
         }
+
+        // Cancel implicit ease() transitions to prevent onComplete callbacks
+        // from firing on destroyed actors (critical for NVIDIA driver stability)
+        this.remove_all_transitions();
+        this._badge.remove_all_transitions();
+        this._glowRing.remove_all_transitions();
+        this._midGlow.remove_all_transitions();
+
         super.destroy();
     }
 });
@@ -439,6 +450,7 @@ export default class HostnameInTitleExtension extends Extension {
         super(metadata);
         this._connections = [];
         this._titleConnections = new Map();
+        this._pendingTimeouts = [];
         this._badge = null;
         this._windowTracker = null;
     }
@@ -526,10 +538,12 @@ export default class HostnameInTitleExtension extends Extension {
         }
 
         const windowCreatedId = global.display.connect('window-created', (_, win) => {
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+            const sourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                this._pendingTimeouts = this._pendingTimeouts.filter(id => id !== sourceId);
                 this._connectWindow(win);
                 return GLib.SOURCE_REMOVE;
             });
+            this._pendingTimeouts.push(sourceId);
         });
         this._connections.push({ obj: global.display, id: windowCreatedId });
 
@@ -550,6 +564,12 @@ export default class HostnameInTitleExtension extends Extension {
     }
 
     disable() {
+        // Cancel pending timeouts before destroying anything
+        for (const sourceId of this._pendingTimeouts) {
+            GLib.source_remove(sourceId);
+        }
+        this._pendingTimeouts = [];
+
         if (this._badge) {
             Main.layoutManager.removeChrome(this._badge);
             this._badge.destroy();
@@ -566,5 +586,8 @@ export default class HostnameInTitleExtension extends Extension {
         }
         this._titleConnections.clear();
         this._windowTracker = null;
+
+        // Clear module-level mutable state
+        sshHostnameCache.clear();
     }
 }
