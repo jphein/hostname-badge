@@ -1,3 +1,4 @@
+<!-- claude-md-version: 7c5e180 | updated: 2026-03-20 -->
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
