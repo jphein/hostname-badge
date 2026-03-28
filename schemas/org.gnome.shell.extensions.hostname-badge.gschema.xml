@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.hostname-badge"
+          path="/org/gnome/shell/extensions/hostname-badge/">
+
+    <key name="position-x" type="i">
+      <default>-1</default>
+      <summary>Badge X position</summary>
+      <description>Saved badge X coordinate (-1 = default top-right)</description>
+    </key>
+
+    <key name="position-y" type="i">
+      <default>8</default>
+      <summary>Badge Y position</summary>
+      <description>Saved badge Y coordinate</description>
+    </key>
+
+    <key name="enable-pulse" type="b">
+      <default>true</default>
+      <summary>Enable pulse animation</summary>
+      <description>Enable the idle breathing pulse animation on the badge</description>
+    </key>
+
+    <key name="badge-opacity" type="i">
+      <default>255</default>
+      <summary>Badge opacity</summary>
+      <description>Maximum badge opacity (0-255)</description>
+    </key>
+
+  </schema>
+</schemalist>

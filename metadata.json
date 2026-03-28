@@ -2,7 +2,8 @@
   "name": "Hostname in Title",
   "description": "Smart hostname display for terminals: extracts SSH hostnames, detects active tab via process state, magical pulsing badge in panel",
   "uuid": "hostname-in-title@local",
-  "shell-version": ["45", "46", "47"],
+  "shell-version": ["45", "46", "47", "48"],
+  "settings-schema": "org.gnome.shell.extensions.hostname-badge",
   "url": "https://github.com/jphein/hostname-badge",
-  "version": 3
+  "version": 4
 }

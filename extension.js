@@ -30,30 +30,10 @@ const HOSTNAME_EXTRACT_PATTERNS = [
 const AGGRESSIVE_APPS = ['claude code', 'claude'];
 const OUR_SUFFIX_PATTERN = /\s+\[[\w.-]+\]$/;
 
-// Settings file for position persistence
-const SETTINGS_PATH = GLib.get_home_dir() + '/.config/hostname-badge-position.json';
-
-function loadPosition() {
-    try {
-        const [ok, contents] = GLib.file_get_contents(SETTINGS_PATH);
-        if (ok) {
-            return JSON.parse(new TextDecoder().decode(contents));
-        }
-    } catch (e) {}
-    return { x: -1, y: 8 }; // default: top-right area
-}
-
-function savePosition(x, y) {
-    try {
-        const data = JSON.stringify({ x, y });
-        GLib.file_set_contents(SETTINGS_PATH, data);
-    } catch (e) {}
-}
-
 // Magical floating badge
 const HostnameBadge = GObject.registerClass(
 class HostnameBadge extends St.Widget {
-    _init() {
+    _init(settings) {
         super._init({
             reactive: true,
             can_focus: true,
@@ -61,33 +41,27 @@ class HostnameBadge extends St.Widget {
             layout_manager: new Clutter.BinLayout(),
         });
         this.set_pivot_point(0.5, 0.5);
+        this._settings = settings;
 
         // Outer glow ring
         this._glowRing = new St.Widget({
-            style: `
-                background-color: rgba(138, 226, 52, 0.15);
-                border: 1px solid rgba(138, 226, 52, 0.25);
-                border-radius: 18px;
-            `,
+            style_class: 'hostname-badge-glow-ring',
         });
         this.add_child(this._glowRing);
 
         // Middle glow
         this._midGlow = new St.Widget({
-            style: `
-                background-color: rgba(138, 226, 52, 0.08);
-                border-radius: 15px;
-            `,
+            style_class: 'hostname-badge-mid-glow',
         });
         this.add_child(this._midGlow);
 
         // Badge label
         this._badge = new St.Label({
             text: `◈ ${LOCAL_HOSTNAME}`,
+            style_class: 'hostname-badge-label',
             y_align: Clutter.ActorAlign.CENTER,
             x_align: Clutter.ActorAlign.CENTER,
         });
-        this._applyLocalStyle();
         this._badge.set_pivot_point(0.5, 0.5);
         this.add_child(this._badge);
 
@@ -101,12 +75,35 @@ class HostnameBadge extends St.Widget {
         this._dragStartX = 0;
         this._dragStartY = 0;
 
+        // Apply opacity from settings
+        const opacity = this._settings.get_int('badge-opacity');
+        this.opacity = Math.max(0, Math.min(255, opacity));
+
+        // Watch for settings changes
+        this._settingsIds = [];
+        this._settingsIds.push(this._settings.connect('changed::enable-pulse', () => {
+            if (this._settings.get_boolean('enable-pulse')) {
+                this._startIdlePulse();
+                this._startGlowPulse();
+            } else {
+                this._stopPulses();
+                this._badge.opacity = 255;
+                this._glowRing.opacity = 255;
+                this._midGlow.opacity = 255;
+            }
+        }));
+        this._settingsIds.push(this._settings.connect('changed::badge-opacity', () => {
+            this.opacity = Math.max(0, Math.min(255, this._settings.get_int('badge-opacity')));
+        }));
+
         this.connect('button-press-event', this._onButtonPress.bind(this));
         this.connect('button-release-event', this._onButtonRelease.bind(this));
         this.connect('motion-event', this._onMotion.bind(this));
 
-        this._startIdlePulse();
-        this._startGlowPulse();
+        if (this._settings.get_boolean('enable-pulse')) {
+            this._startIdlePulse();
+            this._startGlowPulse();
+        }
     }
 
     _onButtonPress(actor, event) {
@@ -130,7 +127,8 @@ class HostnameBadge extends St.Widget {
     _onButtonRelease(actor, event) {
         if (this._dragging) {
             this._dragging = false;
-            savePosition(this.x, this.y);
+            this._settings.set_int('position-x', this.x);
+            this._settings.set_int('position-y', this.y);
             this._badge.ease({
                 scale_x: 1.0,
                 scale_y: 1.0,
@@ -155,75 +153,35 @@ class HostnameBadge extends St.Widget {
     }
 
     _applyLocalStyle() {
-        this._badge.style = `
-            font-weight: bold;
-            font-size: 13px;
-            color: #8ae234;
-            background-color: rgba(20, 35, 20, 0.92);
-            border: 2px solid rgba(138, 226, 52, 0.7);
-            border-radius: 14px;
-            padding: 5px 16px;
-        `;
-        this._glowRing.style = `
-            background-color: rgba(138, 226, 52, 0.12);
-            border: 1px solid rgba(138, 226, 52, 0.2);
-            border-radius: 20px;
-            padding: 6px;
-        `;
-        this._midGlow.style = `
-            background-color: rgba(138, 226, 52, 0.06);
-            border-radius: 17px;
-            padding: 3px;
-        `;
+        this._badge.style_class = 'hostname-badge-label';
+        this._glowRing.style_class = 'hostname-badge-glow-ring';
+        this._midGlow.style_class = 'hostname-badge-mid-glow';
         this._isRemote = false;
     }
 
     _applyRemoteStyle() {
-        this._badge.style = `
-            font-weight: bold;
-            font-size: 13px;
-            color: #34e2e2;
-            background-color: rgba(20, 30, 40, 0.92);
-            border: 2px solid rgba(52, 226, 226, 0.7);
-            border-radius: 14px;
-            padding: 5px 16px;
-        `;
-        this._glowRing.style = `
-            background-color: rgba(52, 226, 226, 0.12);
-            border: 1px solid rgba(52, 226, 226, 0.2);
-            border-radius: 20px;
-            padding: 6px;
-        `;
-        this._midGlow.style = `
-            background-color: rgba(52, 226, 226, 0.06);
-            border-radius: 17px;
-            padding: 3px;
-        `;
+        this._badge.style_class = 'hostname-badge-label-remote';
+        this._glowRing.style_class = 'hostname-badge-glow-ring-remote';
+        this._midGlow.style_class = 'hostname-badge-mid-glow-remote';
         this._isRemote = true;
     }
 
     _applyBurstStyle(isRemote) {
-        const c = isRemote ? '52, 226, 226' : '138, 226, 52';
-        this._badge.style = `
-            font-weight: bold;
-            font-size: 14px;
-            color: #ffffff;
-            background-color: rgba(${c}, 0.25);
-            border: 3px solid rgba(${c}, 1);
-            border-radius: 16px;
-            padding: 6px 18px;
-        `;
-        this._glowRing.style = `
-            background-color: rgba(${c}, 0.35);
-            border: 2px solid rgba(${c}, 0.6);
-            border-radius: 22px;
-            padding: 8px;
-        `;
-        this._midGlow.style = `
-            background-color: rgba(${c}, 0.2);
-            border-radius: 19px;
-            padding: 4px;
-        `;
+        const suffix = isRemote ? 'remote' : 'local';
+        this._badge.style_class = `hostname-badge-label-burst-${suffix}`;
+        this._glowRing.style_class = `hostname-badge-glow-ring-burst-${suffix}`;
+        this._midGlow.style_class = `hostname-badge-mid-glow-burst-${suffix}`;
+    }
+
+    _stopPulses() {
+        if (this._pulseTimeline) {
+            this._pulseTimeline.stop();
+            this._pulseTimeline = null;
+        }
+        if (this._glowPulseTimeline) {
+            this._glowPulseTimeline.stop();
+            this._glowPulseTimeline = null;
+        }
     }
 
     _startIdlePulse() {
@@ -272,15 +230,7 @@ class HostnameBadge extends St.Widget {
     }
 
     _triggerHostChangeGlow(isRemote) {
-        // Stop all pulses
-        if (this._pulseTimeline) {
-            this._pulseTimeline.stop();
-            this._pulseTimeline = null;
-        }
-        if (this._glowPulseTimeline) {
-            this._glowPulseTimeline.stop();
-            this._glowPulseTimeline = null;
-        }
+        this._stopPulses();
 
         // Burst!
         this._applyBurstStyle(isRemote);
@@ -305,8 +255,10 @@ class HostnameBadge extends St.Widget {
                         if (this._destroyed) return;
                         if (isRemote) this._applyRemoteStyle();
                         else this._applyLocalStyle();
-                        this._startIdlePulse();
-                        this._startGlowPulse();
+                        if (this._settings.get_boolean('enable-pulse')) {
+                            this._startIdlePulse();
+                            this._startGlowPulse();
+                        }
                     }
                 });
             }
@@ -336,13 +288,13 @@ class HostnameBadge extends St.Widget {
     destroy() {
         this._destroyed = true;
 
-        if (this._pulseTimeline) {
-            this._pulseTimeline.stop();
-            this._pulseTimeline = null;
-        }
-        if (this._glowPulseTimeline) {
-            this._glowPulseTimeline.stop();
-            this._glowPulseTimeline = null;
+        this._stopPulses();
+
+        // Disconnect GSettings signals
+        if (this._settingsIds) {
+            for (const id of this._settingsIds)
+                this._settings.disconnect(id);
+            this._settingsIds = null;
         }
 
         // Cancel implicit ease() transitions to prevent onComplete callbacks
@@ -453,6 +405,7 @@ export default class HostnameInTitleExtension extends Extension {
         this._pendingTimeouts = [];
         this._badge = null;
         this._windowTracker = null;
+        this._settings = null;
     }
 
     _updateWindow(win) {
@@ -514,22 +467,24 @@ export default class HostnameInTitleExtension extends Extension {
 
     enable() {
         this._windowTracker = Shell.WindowTracker.get_default();
+        this._settings = this.getSettings();
 
         // Create floating badge
-        this._badge = new HostnameBadge();
+        this._badge = new HostnameBadge(this._settings);
         Main.layoutManager.addChrome(this._badge, {
             affectsInputRegion: true,
             trackFullscreen: true,
         });
 
-        // Position from saved settings or default
-        const pos = loadPosition();
-        if (pos.x < 0) {
+        // Position from GSettings or default
+        const posX = this._settings.get_int('position-x');
+        const posY = this._settings.get_int('position-y');
+        if (posX < 0) {
             // Default: top-right, near panel
             const monitor = Main.layoutManager.primaryMonitor;
-            this._badge.set_position(monitor.width - 180, 8);
+            this._badge.set_position(monitor.width - 180, posY);
         } else {
-            this._badge.set_position(pos.x, pos.y);
+            this._badge.set_position(posX, posY);
         }
 
         // Connect existing windows
@@ -586,6 +541,7 @@ export default class HostnameInTitleExtension extends Extension {
         }
         this._titleConnections.clear();
         this._windowTracker = null;
+        this._settings = null;
 
         // Clear module-level mutable state
         sshHostnameCache.clear();

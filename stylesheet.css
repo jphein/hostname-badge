@@ -1,0 +1,104 @@
+/* ═══════════════════════════════════════════════════════════
+   Hostname Badge — GNOME Shell Extension Stylesheet
+   Local (green) + Remote/SSH (cyan) badge styles
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── Badge container ─────────────────────────────────────── */
+
+.hostname-badge-glow-ring {
+    background-color: rgba(138, 226, 52, 0.12);
+    border: 1px solid rgba(138, 226, 52, 0.2);
+    border-radius: 20px;
+    padding: 6px;
+}
+
+.hostname-badge-mid-glow {
+    background-color: rgba(138, 226, 52, 0.06);
+    border-radius: 17px;
+    padding: 3px;
+}
+
+.hostname-badge-label {
+    font-weight: bold;
+    font-size: 13px;
+    color: #8ae234;
+    background-color: rgba(20, 35, 20, 0.92);
+    border: 2px solid rgba(138, 226, 52, 0.7);
+    border-radius: 14px;
+    padding: 5px 16px;
+}
+
+/* ── Remote (SSH) state ──────────────────────────────────── */
+
+.hostname-badge-glow-ring-remote {
+    background-color: rgba(52, 226, 226, 0.12);
+    border: 1px solid rgba(52, 226, 226, 0.2);
+    border-radius: 20px;
+    padding: 6px;
+}
+
+.hostname-badge-mid-glow-remote {
+    background-color: rgba(52, 226, 226, 0.06);
+    border-radius: 17px;
+    padding: 3px;
+}
+
+.hostname-badge-label-remote {
+    font-weight: bold;
+    font-size: 13px;
+    color: #34e2e2;
+    background-color: rgba(20, 30, 40, 0.92);
+    border: 2px solid rgba(52, 226, 226, 0.7);
+    border-radius: 14px;
+    padding: 5px 16px;
+}
+
+/* ── Burst animation state (local) ───────────────────────── */
+
+.hostname-badge-glow-ring-burst-local {
+    background-color: rgba(138, 226, 52, 0.35);
+    border: 2px solid rgba(138, 226, 52, 0.6);
+    border-radius: 22px;
+    padding: 8px;
+}
+
+.hostname-badge-mid-glow-burst-local {
+    background-color: rgba(138, 226, 52, 0.2);
+    border-radius: 19px;
+    padding: 4px;
+}
+
+.hostname-badge-label-burst-local {
+    font-weight: bold;
+    font-size: 14px;
+    color: #ffffff;
+    background-color: rgba(138, 226, 52, 0.25);
+    border: 3px solid rgba(138, 226, 52, 1);
+    border-radius: 16px;
+    padding: 6px 18px;
+}
+
+/* ── Burst animation state (remote) ──────────────────────── */
+
+.hostname-badge-glow-ring-burst-remote {
+    background-color: rgba(52, 226, 226, 0.35);
+    border: 2px solid rgba(52, 226, 226, 0.6);
+    border-radius: 22px;
+    padding: 8px;
+}
+
+.hostname-badge-mid-glow-burst-remote {
+    background-color: rgba(52, 226, 226, 0.2);
+    border-radius: 19px;
+    padding: 4px;
+}
+
+.hostname-badge-label-burst-remote {
+    font-weight: bold;
+    font-size: 14px;
+    color: #ffffff;
+    background-color: rgba(52, 226, 226, 0.25);
+    border: 3px solid rgba(52, 226, 226, 1);
+    border-radius: 16px;
+    padding: 6px 18px;
+}
