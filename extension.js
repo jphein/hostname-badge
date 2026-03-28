@@ -12,7 +12,7 @@ const sshHostnameCache = new Map();
 const TERMINAL_CLASSES = [
     'gnome-terminal', 'gnome-terminal-server', 'tilix', 'kitty',
     'alacritty', 'terminator', 'konsole', 'xterm', 'urxvt',
-    'foot', 'wezterm', 'contour', 'hyper', 'tabby'
+    'foot', 'wezterm', 'contour', 'hyper', 'tabby', 'ghostty'
 ];
 
 const HOSTNAME_EXTRACT_PATTERNS = [
