@@ -76,3 +76,7 @@ rm -rf ~/.local/share/gnome-shell/extensions/hostname-in-title@local
 ```
 
 Then log out/in or restart GNOME Shell.
+
+## License
+
+AGPL-3.0-or-later © 2026 Jeffrey Pine Hein. See [LICENSE](LICENSE).
